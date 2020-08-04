@@ -24,6 +24,32 @@ class SDS1202XE(VISABaseClass):
     SARA_UNIT = {'G':1E9,'M':1E6,'k':1E3}
     TRIG_MODE = ['AUTO', 'NORM', 'SINGLE', 'STOP']
     MEMORY_SIZE = ['7K', '70K', '700K', '7M']
+    TIME_DIV = [
+        '1ns','2ns','5ns','10ns','20ns','50ns','100ns','200ns','500ns',
+        '1us','2us','5us','10us','20us','50us','100us','200us','500us',
+        '1ms','2ms','5ms','10ms','20ms','50ms','100ms','200ms','500ms',
+        '1s','2s','5s','10s','20s','50s','100'
+    ]
+    
+    # =========
+    # functions to check input values
+    # =========
+    
+    def _check_input_value(self, val_name, val, check_lst):
+        """base function to check input values for setter functions
+        
+        This function is used as a base function for checking that input values 
+        are valid input values as specified in the user manual
+        
+        For an example on how to use it check out `_check_tdiv_input_value
+        
+        """
+        if not val in check_lst:
+            raise SDS1202XEException(
+                'Given {}: {} is not a valid value'. format(val_name, val) +
+                'valid values are: {}'.format(check_lst)
+            )
+        return 
     
     def _check_channel_input_value(self, channel):
         if not channel in self.CHANNELS:
@@ -48,6 +74,21 @@ class SDS1202XE(VISABaseClass):
                 'Try instead: {}'.format(self.MEMORY_SIZE)
             )
         return
+    
+    def _check_tdiv_input_value(self, tdiv):
+        if type(tdiv) == float:
+            return 
+        elif type(tdiv) == int:
+            return
+        else:
+            return self._check_input_value('tdiv', tdiv, self.TIME_DIV)
+        
+    def _check_vdiv_input_value(self, vdiv):
+        return
+    
+    # ==========
+    # return string parser
+    # ==========
     
     def _parse_sara_value(self, sara, sara_unit=None):
         """convert the sara string returned from the DSO to a float value
@@ -123,9 +164,20 @@ class SDS1202XE(VISABaseClass):
         scpi_cmd = 'c{}:vdiv?'.format(channel)
         return self.query(scpi_cmd)
     
+    def set_vdiv(self, channel, vdiv):
+        self._check_channel_input_value(channel)
+        self._check_vdiv_input_value(vdiv)
+        scpi_cmd = 'c{}:vdiv {}'.format(channel, str(vdiv))
+        return self.write(scpi_cmd)
+    
     def get_tdiv(self):
         scpi_cmd = 'tdiv?'
         return self.query(scpi_cmd)
+    
+    def set_tdiv(self, tdiv):
+        self._check_tdiv_input_value(tdiv)
+        scpi_cmd = 'tdiv {}'.format(tdiv)
+        return self.write(scpi_cmd)
     
     def get_sara(self):
         """returns sample rate of the scope"""
