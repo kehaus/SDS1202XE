@@ -22,9 +22,10 @@ class SDS1202XE(VISABaseClass):
     
     CHANNELS = [1,2]
     SARA_UNIT = {'G':1E9,'M':1E6,'k':1E3}
-    TRIG_MODE = {'AUTO', 'NORM', 'SINGLE', 'STOP'}
+    TRIG_MODE = ['AUTO', 'NORM', 'SINGLE', 'STOP']
+    MEMORY_SIZE = ['7K', '70K', '700K', '7M']
     
-    def _check_channel_value(self, channel):
+    def _check_channel_input_value(self, channel):
         if not channel in self.CHANNELS:
             raise SDS1202XEException(
                 'Given channel: {} is not a valid value'.format(channel) +
@@ -32,13 +33,22 @@ class SDS1202XE(VISABaseClass):
             )
         return
     
-    def _check_trigger_mode_value(self, mode):
+    def _check_trigger_mode_input_value(self, mode):
         if not mode in self.TRIG_MODE:
             raise SDS1202XEException(
                 'Given mode: {} is not a valid mode'.format(mode) + 
                 'Try instead: {}'.format(self.TRIG_MODE)
             )
+        return
         
+    def _check_memory_size_input_value(self, msiz):
+        if not msiz in self.MEMORY_SIZE:
+            raise SDS1202XEException(
+                'Given mermory size: {} is not a valid mode'.format(str(msiz)) + 
+                'Try instead: {}'.format(self.MEMORY_SIZE)
+            )
+        return
+    
     def _parse_sara_value(self, sara, sara_unit=None):
         """convert the sara string returned from the DSO to a float value
         
@@ -47,6 +57,8 @@ class SDS1202XE(VISABaseClass):
         if sara_unit == None:
             sara_unit = self.SARA_UNIT
         
+        sara = sara.replace('SARA ','')
+        
         for unit in sara_unit.keys():
             if sara.find(unit)!=-1:
                 sara = sara.split(unit)
@@ -54,6 +66,36 @@ class SDS1202XE(VISABaseClass):
                 break
         sara = float(sara)
         return sara
+    
+    def _parse_waveform_raw_values(self, raw_values, vdiv, ofst, tdiv, sara):
+        """parses time and volt values from raw values output"""
+        
+        # remove redundant lines 
+        raw_values = raw_values[15:]
+        raw_values.pop()
+        raw_values.pop()
+    
+        # shift data values
+        volt_values = []
+        for val in raw_values:
+            if val > 127:
+                val -= 255
+            else:
+                pass
+            volt_values.append(val)
+
+        # get time information
+        time_values = []
+        grid = 14 # DSO display divides the time axis into 14 division
+        for idx in range(len(volt_values)):
+            # convert to actual voltage values
+            volt_values[idx] = volt_values[idx]*float(vdiv)/25-float(ofst)
+            # reconstruct time steps
+            time_val = -(float(tdiv)*grid/2)+idx*(1/sara)
+            time_values.append(time_val)
+
+        return time_values, volt_values
+        
     
     # =========
     # high-level functions
@@ -72,12 +114,12 @@ class SDS1202XE(VISABaseClass):
         return self.query(scpi_cmd).lower()
     
     def get_voffset(self, channel):
-        self._check_channel_value(channel)
+        self._check_channel_input_value(channel)
         scpi_cmd = 'c{}:ofst?'.format(channel)
         return self.query(scpi_cmd)
     
     def get_vdiv(self, channel):
-        self._check_channel_value(channel)
+        self._check_channel_input_value(channel)
         scpi_cmd = 'c{}:vdiv?'.format(channel)
         return self.query(scpi_cmd)
     
@@ -110,9 +152,26 @@ class SDS1202XE(VISABaseClass):
         return self.query(scpi_cmd)
     
     def set_trigger_mode(self, mode):
-        self._check_trigger_mode_value(mode)
+        self._check_trigger_mode_input_value(mode)
         scpi_mode = 'TRMD {}'.format(mode)
         self.write(scpi_mode)
+        return
+        
+    def get_memory_size(self):
+        scpi_cmd = 'MSIZ?'
+        return self.query(scpi_cmd)
+    
+    def set_memory_size(self, msiz):
+        self._check_memory_size_input_value(msiz)
+        
+        trigger_mode = self.get_trigger_mode()
+        if trigger_mode == 'STOP':
+            raise SDS1202XEException(
+                'Memory size cannot be changed if Trigger mode is STOP'
+            )
+        scpi_cmd = 'MSIZ {}'.format(msiz)
+        self.write(scpi_cmd)
+        return         
     
     def arm_acquisition(self):
         scpi_cmd = 'ARM'
@@ -126,7 +185,7 @@ class SDS1202XE(VISABaseClass):
     
     def get_waveform(self, channel):
         """transfers measurement data from oscilloscope to computer"""
-        self._check_channel_value(channel)
+        self._check_channel_input_value(channel)
         
         # get measurement information
         self.write("chdr off")
@@ -143,49 +202,57 @@ class SDS1202XE(VISABaseClass):
         scpi_cmd = 'c{}:wf? dat2'.format(channel)
         self.write(scpi_cmd)
         
-        raw_values = list(self.read_raw())[15:]
-        raw_values.pop()
-        raw_values.pop()
-    
-        # shift data values
-        volt_values = []
-        for val in raw_values:
-            if val > 127:
-                val -= 255
-            else:
-                pass
-            volt_values.append(val)
-
-        # get time information
-        time_values = []
-        grid = 14 # DSO display divides the time axis into 14 division
-        for idx in range(len(volt_values)):
-            # convert to actual voltage values
-            volt_values[idx] = volt_values[idx]*float(vdiv)/25-float(ofst)
-            # reconstruct time steps
-            time_val = -(float(tdiv)*grid/2)+idx*(1/sara)
-            time_values.append(time_val)
+        raw_values = list(self.read_raw())
+#        raw_values = list(self.read_raw())[15:]
+        
+        time_values, volt_values = self._parse_waveform_raw_values(
+            raw_values, vdiv, ofst, tdiv, sara
+        )
+#        raw_values.pop()
+#        raw_values.pop()
+#    
+#        # shift data values
+#        volt_values = []
+#        for val in raw_values:
+#            if val > 127:
+#                val -= 255
+#            else:
+#                pass
+#            volt_values.append(val)
+#
+#        # get time information
+#        time_values = []
+#        grid = 14 # DSO display divides the time axis into 14 division
+#        for idx in range(len(volt_values)):
+#            # convert to actual voltage values
+#            volt_values[idx] = volt_values[idx]*float(vdiv)/25-float(ofst)
+#            # reconstruct time steps
+#            time_val = -(float(tdiv)*grid/2)+idx*(1/sara)
+#            time_values.append(time_val)
     
         return time_values, volt_values
     
-    def acquire_waveform(self, channel):
+    def perform_measurement(self):
+        """performs one measurement for all channels
         
+        Data can be retreived from DSO wit the get_waveform command
+        
+        """
         self.set_trigger_mode('SINGLE')
         status = self.get_sample_status()
-        while not status == 'stop':
+        while not 'stop' in status:
             time.sleep(0.1)
             status = self.get_sample_status()
+        return
+    
+    def acquire_waveform(self, channel):
+        self.perform_measurement()
         
         t, v = self.get_waveform(channel)
         return t,v
     
     def acquire_both_waveform(self):
-        
-        self.set_trigger_mode('SINGLE')
-        status = self.get_sample_status()
-        while not status == 'stop':
-            time.sleep(1)
-            status = self.get_sample_status()
+        self.perform_measurement()
 
         t1, v1 = self.get_waveform(1)
         t2, v2 = self.get_waveform(2)
